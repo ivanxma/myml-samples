@@ -35,6 +35,10 @@ Environment overrides:
 EOF
 }
 
+is_interactive_terminal() {
+  [[ -t 0 && -t 1 ]]
+}
+
 parse_args() {
   local positional=()
 
@@ -203,6 +207,57 @@ resolve_value() {
   else
     echo "$fallback"
   fi
+}
+
+prompt_for_port_value() {
+  local label="$1"
+  local current_value="$2"
+  local entered_value
+  local normalized_value
+
+  while true; do
+    printf '%s port [%s]: ' "$label" "$current_value" >&2
+    if ! read -r entered_value; then
+      echo >&2
+      echo "$current_value"
+      return 0
+    fi
+    if [[ -z "$entered_value" ]]; then
+      echo "$current_value"
+      return 0
+    fi
+
+    if normalized_value="$(normalize_port "$label" "$entered_value" 2>/dev/null)"; then
+      echo "$normalized_value"
+      return 0
+    fi
+
+    echo "Enter a numeric port between 1 and 65535, or press Enter to keep $current_value." >&2
+  done
+}
+
+prompt_for_ports_if_needed() {
+  local http_port="$1"
+  local https_port="$2"
+
+  if ! is_interactive_terminal; then
+    printf '%s\n%s\n' "$http_port" "$https_port"
+    return 0
+  fi
+
+  if [[ -z "$HTTP_PORT_INPUT" || -z "$HTTPS_PORT_INPUT" ]]; then
+    echo "Press Enter to keep the current port values." >&2
+  fi
+
+  if [[ -z "$HTTP_PORT_INPUT" ]]; then
+    http_port="$(prompt_for_port_value "HTTP" "$http_port")"
+  fi
+
+  if [[ -z "$HTTPS_PORT_INPUT" ]]; then
+    https_port="$(prompt_for_port_value "HTTPS" "$https_port")"
+  fi
+
+  printf '%s\n%s\n' "$http_port" "$https_port"
 }
 
 open_firewall_port() {
@@ -415,6 +470,7 @@ main() {
   local https_port
   local ssl_cert_file
   local ssl_key_file
+  local prompted_ports
 
   load_existing_runtime_env
   parse_args "$@"
@@ -431,6 +487,9 @@ main() {
   host_value="$(resolve_value "$HOST_INPUT" "$EXISTING_HOST" "0.0.0.0")"
   http_port="$(normalize_port "HTTP" "$(resolve_value "$HTTP_PORT_INPUT" "$EXISTING_DEFAULT_HTTP_PORT" "80")")"
   https_port="$(normalize_port "HTTPS" "$(resolve_value "$HTTPS_PORT_INPUT" "$EXISTING_DEFAULT_HTTPS_PORT" "443")")"
+  prompted_ports="$(prompt_for_ports_if_needed "$http_port" "$https_port")"
+  http_port="$(printf '%s\n' "$prompted_ports" | sed -n '1p')"
+  https_port="$(printf '%s\n' "$prompted_ports" | sed -n '2p')"
   ssl_cert_file="$(resolve_value "$SSL_CERT_FILE_INPUT" "$EXISTING_SSL_CERT_FILE" "")"
   ssl_key_file="$(resolve_value "$SSL_KEY_FILE_INPUT" "$EXISTING_SSL_KEY_FILE" "")"
 
