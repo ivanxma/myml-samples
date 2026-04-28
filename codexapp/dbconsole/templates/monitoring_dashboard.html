@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% macro render_report_table(report, empty_text="No rows returned.") %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {% for column in report.columns %}
+        <th>{{ column }}</th>
+        {% else %}
+        <th>No columns returned</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in report.rows %}
+      <tr>
+        {% for column in report.columns %}
+        <td>{{ row[column] }}</td>
+        {% endfor %}
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="{{ report.columns|length if report.columns else 1 }}">{{ empty_text }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% macro render_report_panel(title, report, empty_text="No rows returned.") %}
+<article class="panel">
+  <div class="panel-header">
+    <h3>{{ title }}</h3>
+    {% if report.error %}
+    <span class="helper-text">Unavailable</span>
+    {% endif %}
+  </div>
+  {% if report.error %}
+  <p class="helper-text">{{ report.error }}</p>
+  {% else %}
+  {{ render_report_table(report, empty_text) }}
+  {% endif %}
+</article>
+{% endmacro %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Monitoring</p>
+  <h2>Monitoring Dashboard</h2>
+  <p>Unified monitoring view for sessions, locks, storage, temp usage, and replication state from MySQL and Performance Schema.</p>
+</section>
+
+<section class="info-grid">
+  {% for metric in metrics %}
+  <article class="info-card metric-card">
+    <span class="metric-label">{{ metric.label }}</span>
+    <strong class="metric-value">{{ metric.value }}</strong>
+    <p class="helper-text">{{ metric.subtitle }}</p>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="split-layout">
+  {{ render_report_panel("Global Status", global_status, "Global status metrics were not returned.") }}
+  {{ render_report_panel("User Process List", user_processes, "No user sessions found.") }}
+</section>
+
+<section class="split-layout">
+  {{ render_report_panel("Current Connections", current_connections, "No connection groups found.") }}
+  {{ render_report_panel("InnoDB Memory Usage", innodb_memory, "No InnoDB memory instrumentation rows found.") }}
+</section>
+
+<section class="split-layout">
+  {{ render_report_panel("InnoDB Storage Usage", innodb_storage, "No InnoDB storage rows found.") }}
+  {{ render_report_panel("Temp Storage Settings", temp_storage, "No temp storage settings returned.") }}
+</section>
+
+<section class="panel">
+  <h3>Temp Table Usage</h3>
+  {% if temp_tables.error %}
+  <p class="helper-text">{{ temp_tables.error }}</p>
+  {% else %}
+  {{ render_report_table(temp_tables, "No temporary InnoDB tables reported.") }}
+  {% endif %}
+</section>
+
+<section class="split-layout">
+  {{ render_report_panel("Replica Status", replication_connection, "No replication channel rows returned.") }}
+  {{ render_report_panel("Replica Applier Coordinator", replication_applier, "No replication applier coordinator rows returned.") }}
+</section>
+
+<section class="panel">
+  <h3>Replica Applier Workers</h3>
+  {% if replication_workers.error %}
+  <p class="helper-text">{{ replication_workers.error }}</p>
+  {% else %}
+  {{ render_report_table(replication_workers, "No replication applier worker rows returned.") }}
+  {% endif %}
+</section>
+{% endblock %}

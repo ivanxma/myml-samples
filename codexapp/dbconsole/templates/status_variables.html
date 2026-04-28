@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Admin</p>
+  <h2>Status and Variables</h2>
+  <p>Global MySQL status and variable values grouped into expandable sections for quick review.</p>
+</section>
+
+<section class="tab-shell">
+  <div class="tab-strip">
+    <a
+      class="tab-link {% if active_tab == 'status' %}active{% endif %}"
+      href="{{ url_for('admin_status_variables_page', tab='status') }}"
+    >
+      Status
+    </a>
+    <a
+      class="tab-link {% if active_tab == 'variables' %}active{% endif %}"
+      href="{{ url_for('admin_status_variables_page', tab='variables') }}"
+    >
+      Variables
+    </a>
+  </div>
+</section>
+
+<section class="info-grid">
+  <article class="info-card metric-card">
+    <span class="metric-label">View</span>
+    <strong class="metric-value">{{ status_variable_page.tab_label }}</strong>
+    <p class="helper-text">
+      {{ status_variable_page.total_count }} entries across {{ status_variable_page.non_empty_count }} populated sections.
+    </p>
+  </article>
+</section>
+
+{% if error_message %}
+<section class="panel">
+  <h3>{{ status_variable_page.tab_label }}</h3>
+  <p class="helper-text">{{ error_message }}</p>
+</section>
+{% else %}
+<section class="accordion-list">
+  {% for section in status_variable_page.sections %}
+  <details class="accordion-panel" {% if section.open_by_default %}open{% endif %}>
+    <summary class="accordion-summary">
+      <span class="accordion-title">{{ section.label }}</span>
+      <span class="accordion-count">{{ section.row_count }} entries</span>
+    </summary>
+    <div class="accordion-body">
+      {% if section.rows %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Value</th>
+              {% if status_variable_page.show_source_details %}
+              <th>Set From</th>
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in section.rows %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td>{{ row.value if row.value else "-" }}</td>
+              {% if status_variable_page.show_source_details %}
+              <td>
+                <strong>{{ row.source or "-" }}</strong>
+                {% if row.path %}
+                <div class="helper-text">{{ row.path }}</div>
+                {% endif %}
+              </td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="helper-text section-empty">No {{ active_tab }} entries matched this section.</p>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

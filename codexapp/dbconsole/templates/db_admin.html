@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">MySQL</p>
+  <h2>DB Admin</h2>
+  <p>Create databases, inspect table definitions, and browse live rows from the connected server.</p>
+</section>
+
+<section class="split-layout split-layout-top">
+  <article class="panel">
+    <h3>Create Database</h3>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="db_action" value="create_database">
+      <label>
+        Database Name
+        <input name="database_name" type="text" placeholder="example_db">
+      </label>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Create Database</button>
+      </div>
+    </form>
+  </article>
+
+  <article class="panel">
+    <h3>Select Database and Table</h3>
+    <form method="get" class="form-grid compact-form">
+      <label>
+        Database
+        <select name="database" onchange="this.form.submit()">
+          <option value="">Choose a database</option>
+          {% for row in database_inventory %}
+          <option value="{{ row.database_name }}" {% if row.database_name == selected_database %}selected{% endif %}>
+            {{ row.database_name }}{% if row.is_system %} (system){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Table
+        <select name="table" onchange="this.form.submit()">
+          <option value="">Choose a table</option>
+          {% for row in tables %}
+          <option value="{{ row.table_name }}" {% if row.table_name == selected_table %}selected{% endif %}>{{ row.table_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+
+    {% if selected_database and selected_database not in ['information_schema', 'mysql', 'performance_schema', 'sys'] %}
+    <form method="post" onsubmit="return confirm('Drop database {{ selected_database }}?');">
+      <input type="hidden" name="db_action" value="drop_database">
+      <input type="hidden" name="database_name" value="{{ selected_database }}">
+      <button class="button secondary danger" type="submit">Drop Selected Database</button>
+    </form>
+    {% endif %}
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Tables{% if selected_database %} in {{ selected_database }}{% endif %}</h3>
+    {% if selected_database %}
+    <a class="button secondary" href="{{ url_for('db_admin_download', database=selected_database) }}">Download CSV</a>
+    {% endif %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th>Engine</th>
+          <th>Rows</th>
+          <th>HeatWave</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in tables %}
+        <tr class="{% if row.table_name == selected_table %}active-table-row{% endif %}">
+          <td>
+            <a
+              class="table-select-link"
+              href="{{ url_for('db_admin_page', database=selected_database, table=row.table_name) }}"
+            >
+              {{ row.table_name }}
+            </a>
+          </td>
+          <td>{{ row.engine }}</td>
+          <td>{{ row.row_count }}</td>
+          <td>{{ "Configured" if row.heatwave_configured else "-" }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4">Choose a database to list its tables.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="split-layout">
+  <article class="panel">
+    <h3>Column Metadata</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Column</th>
+            <th>Type</th>
+            <th>Nullable</th>
+            <th>Key</th>
+            <th>Extra</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in columns %}
+          <tr>
+            <td>{{ row.column_name }}</td>
+            <td>{{ row.column_type }}</td>
+            <td>{{ row.is_nullable }}</td>
+            <td>{{ row.column_key or "-" }}</td>
+            <td>{{ row.extra or "-" }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5">Choose a table to inspect columns.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <h3>CREATE TABLE</h3>
+    {% if ddl_statement %}
+    <pre class="sql-block">{{ ddl_statement }}</pre>
+    {% else %}
+    <p class="helper-text">Choose a table to load its definition.</p>
+    {% endif %}
+  </article>
+</section>
+
+<section class="panel">
+  <h3>Indexes</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Index</th>
+          <th>Unique</th>
+          <th>Type</th>
+          <th>Visible</th>
+          <th>Columns</th>
+          <th>Cardinality</th>
+          <th>Comment</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in indexes %}
+        <tr>
+          <td>{{ row.index_name }}</td>
+          <td>{{ "Yes" if row.is_unique else "No" }}</td>
+          <td>{{ row.index_type }}</td>
+          <td>{{ row.is_visible }}</td>
+          <td>{{ row.columns|join(", ") }}</td>
+          <td>{{ row.cardinality }}</td>
+          <td>{{ row.index_comment }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7">Choose a table to inspect indexes.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Partitions</h3>
+    {% if partitions.is_partitioned %}
+    <span class="helper-text">{{ partitions.partition_count }} partitions</span>
+    {% endif %}
+  </div>
+  {% if not selected_table %}
+  <p class="helper-text">Choose a table to inspect partition metadata.</p>
+  {% elif not partitions.is_partitioned %}
+  <p class="helper-text">The selected table is not partitioned.</p>
+  {% else %}
+  <div class="split-layout split-layout-top">
+    <article>
+      <dl class="detail-list">
+        <div>
+          <dt>Partition Method</dt>
+          <dd>{{ partitions.partition_method }}</dd>
+        </div>
+        <div>
+          <dt>Partition Expression</dt>
+          <dd>{{ partitions.partition_expression }}</dd>
+        </div>
+      </dl>
+    </article>
+    <article>
+      <dl class="detail-list">
+        <div>
+          <dt>Subpartition Method</dt>
+          <dd>{{ partitions.subpartition_method }}</dd>
+        </div>
+        <div>
+          <dt>Subpartition Expression</dt>
+          <dd>{{ partitions.subpartition_expression }}</dd>
+        </div>
+      </dl>
+    </article>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Partition</th>
+          <th>Subpartition</th>
+          <th>Description</th>
+          <th>Rows</th>
+          <th>Data Length</th>
+          <th>Index Length</th>
+          <th>Data Free</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in partitions.rows %}
+        <tr>
+          <td>{{ row.partition_name }}</td>
+          <td>{{ row.subpartition_name }}</td>
+          <td>{{ row.partition_description }}</td>
+          <td>{{ row.table_rows }}</td>
+          <td>{{ row.data_length }}</td>
+          <td>{{ row.index_length }}</td>
+          <td>{{ row.data_free }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Table Preview</h3>
+    {% if preview.total_rows %}
+    <span class="helper-text">{{ preview.total_rows }} total rows</span>
+    {% endif %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for column in preview.columns %}
+          <th>{{ column }}</th>
+          {% else %}
+          <th>No table selected</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in preview.rows %}
+        <tr>
+          {% for column in preview.columns %}
+          <td>{{ row[column] }}</td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="{{ preview.columns|length if preview.columns else 1 }}">No preview rows available.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if selected_database and selected_table %}
+  <div class="pager">
+    {% if preview.has_previous %}
+    <a class="button secondary" href="{{ url_for('db_admin_page', database=selected_database, table=selected_table, page=preview.page - 1) }}">Previous</a>
+    {% endif %}
+    <span>Page {{ preview.page }}</span>
+    {% if preview.has_next %}
+    <a class="button secondary" href="{{ url_for('db_admin_page', database=selected_database, table=selected_table, page=preview.page + 1) }}">Next</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

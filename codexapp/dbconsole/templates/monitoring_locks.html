@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% macro render_report_table(report, empty_text="No rows returned.") %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {% for column in report.columns %}
+        <th>{{ column }}</th>
+        {% else %}
+        <th>No columns returned</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in report.rows %}
+      <tr>
+        {% for column in report.columns %}
+        <td>{{ row[column] }}</td>
+        {% endfor %}
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="{{ report.columns|length if report.columns else 1 }}">{{ empty_text }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Monitoring</p>
+  <h2>Locks</h2>
+  <p>Inspect row locks and metadata locks. Click a lock row to load the source of the lock on the left and the impacted queries or connections on the right.</p>
+</section>
+
+<section class="tab-shell">
+  <div class="tab-strip" role="tablist" aria-label="Locks tabs">
+    <a
+      href="{{ url_for('monitoring_locks_page', lock_focus='row') }}"
+      class="tab-link {% if lock_focus == 'row' %}active{% endif %}"
+    >
+      Row Locks
+    </a>
+    <a
+      href="{{ url_for('monitoring_locks_page', lock_focus='meta') }}"
+      class="tab-link {% if lock_focus == 'meta' %}active{% endif %}"
+    >
+      Meta Locks
+    </a>
+  </div>
+</section>
+
+{% if lock_focus == 'row' %}
+<section class="panel">
+  <div class="panel-header">
+    <h3>Row Locks</h3>
+    <span class="helper-text">Each row shows the waiter and blocker pair for a table-level contention event.</span>
+  </div>
+  {% if row_locks.error %}
+  <p class="helper-text">{{ row_locks.error }}</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Waiting Conn</th>
+          <th>Waiting User</th>
+          <th>Waiting Sec</th>
+          <th>Waiting Lock</th>
+          <th>Blocking Conn</th>
+          <th>Blocking User</th>
+          <th>Blocking Sec</th>
+          <th>Blocking Lock</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in row_locks.rows %}
+        <tr class="{% if selected_row_lock_schema == row.object_schema and selected_row_lock_table == row.object_name and selected_row_blocking_connection_id == row.blocking_connection_id and selected_row_waiting_connection_id == row.waiting_connection_id %}active-table-row{% endif %}">
+          <td>
+            <a href="{{ url_for('monitoring_locks_page', lock_focus='row', row_lock_schema=row.object_schema, row_lock_table=row.object_name, row_blocking_connection_id=row.blocking_connection_id, row_waiting_connection_id=row.waiting_connection_id) }}">
+              {{ row.object_schema }}
+            </a>
+          </td>
+          <td>{{ row.object_name }}</td>
+          <td>{{ row.waiting_connection_id }}</td>
+          <td>{{ row.waiting_user }}</td>
+          <td>{{ row.waiting_seconds }}</td>
+          <td>{{ row.waiting_lock_type }} / {{ row.waiting_lock_mode }}</td>
+          <td>{{ row.blocking_connection_id }}</td>
+          <td>{{ row.blocking_user }}</td>
+          <td>{{ row.blocking_seconds }}</td>
+          <td>{{ row.blocking_lock_type }} / {{ row.blocking_lock_mode }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="10">No row lock waits found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="split-layout split-layout-top">
+  <article class="panel">
+    <div class="panel-header">
+      <h3>Source of the Lock</h3>
+      {% if selected_row_lock_schema and selected_row_lock_table and selected_row_blocking_connection_id %}
+      <span class="helper-text">{{ selected_row_lock_schema }}.{{ selected_row_lock_table }} / blocker {{ selected_row_blocking_connection_id }}</span>
+      {% else %}
+      <span class="helper-text">Click a row lock above.</span>
+      {% endif %}
+    </div>
+    <h4>Blocking Connection</h4>
+    {% if row_lock_source_process.error %}
+    <p class="helper-text">{{ row_lock_source_process.error }}</p>
+    {% else %}
+    {{ render_report_table(row_lock_source_process, "No blocking connection detail loaded.") }}
+    {% endif %}
+    <h4>Held Locks on Object</h4>
+    {% if row_lock_source.error %}
+    <p class="helper-text">{{ row_lock_source.error }}</p>
+    {% else %}
+    {{ render_report_table(row_lock_source, "No held row-lock detail loaded.") }}
+    {% endif %}
+  </article>
+
+  <article class="panel">
+    <div class="panel-header">
+      <h3>Impacted Queries / Connections</h3>
+      {% if selected_row_waiting_connection_id %}
+      <span class="helper-text">waiter {{ selected_row_waiting_connection_id }}</span>
+      {% else %}
+      <span class="helper-text">Click a row lock above.</span>
+      {% endif %}
+    </div>
+    <h4>Waiting Connection</h4>
+    {% if row_lock_impacted_process.error %}
+    <p class="helper-text">{{ row_lock_impacted_process.error }}</p>
+    {% else %}
+    {{ render_report_table(row_lock_impacted_process, "No waiting connection detail loaded.") }}
+    {% endif %}
+    <h4>Waiting Lock Detail</h4>
+    {% if row_lock_impacted.error %}
+    <p class="helper-text">{{ row_lock_impacted.error }}</p>
+    {% else %}
+    {{ render_report_table(row_lock_impacted, "No impacted row-lock detail loaded.") }}
+    {% endif %}
+  </article>
+</section>
+{% else %}
+<section class="panel">
+  <div class="panel-header">
+    <h3>Meta Locks</h3>
+    <span class="helper-text">Click an object-level metadata lock to inspect the owner and the waiting sessions.</span>
+  </div>
+  {% if metadata_locks.error %}
+  <p class="helper-text">{{ metadata_locks.error }}</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Schema</th>
+          <th>Object</th>
+          <th>Status</th>
+          <th>Lock Type</th>
+          <th>Duration</th>
+          <th>Owner Conn</th>
+          <th>Owner User</th>
+          <th>Elapsed Sec</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in metadata_locks.rows %}
+        <tr class="{% if selected_mdl_schema == row.object_schema and selected_mdl_name == row.object_name and selected_mdl_owner_connection_id == row.owner_connection_id %}active-table-row{% endif %}">
+          <td>
+            <a href="{{ url_for('monitoring_locks_page', lock_focus='meta', mdl_schema=row.object_schema, mdl_name=row.object_name, mdl_owner_connection_id=row.owner_connection_id) }}">
+              {{ row.object_type }}
+            </a>
+          </td>
+          <td>{{ row.object_schema }}</td>
+          <td>{{ row.object_name }}</td>
+          <td>{{ row.lock_status }}</td>
+          <td>{{ row.lock_type }}</td>
+          <td>{{ row.lock_duration }}</td>
+          <td>{{ row.owner_connection_id }}</td>
+          <td>{{ row.owner_user }}</td>
+          <td>{{ row.owner_elapsed_seconds }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9">No metadata locks found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="split-layout split-layout-top">
+  <article class="panel">
+    <div class="panel-header">
+      <h3>Source of the Lock</h3>
+      {% if selected_mdl_schema and selected_mdl_name and selected_mdl_owner_connection_id %}
+      <span class="helper-text">{{ selected_mdl_schema }}.{{ selected_mdl_name }} / owner {{ selected_mdl_owner_connection_id }}</span>
+      {% else %}
+      <span class="helper-text">Click a metadata lock above.</span>
+      {% endif %}
+    </div>
+    <h4>Owner Connection</h4>
+    {% if metadata_lock_source_process.error %}
+    <p class="helper-text">{{ metadata_lock_source_process.error }}</p>
+    {% else %}
+    {{ render_report_table(metadata_lock_source_process, "No owner connection detail loaded.") }}
+    {% endif %}
+    <h4>Owner Lock Detail</h4>
+    {% if metadata_lock_source.error %}
+    <p class="helper-text">{{ metadata_lock_source.error }}</p>
+    {% else %}
+    {{ render_report_table(metadata_lock_source, "No metadata source detail loaded.") }}
+    {% endif %}
+  </article>
+
+  <article class="panel">
+    <div class="panel-header">
+      <h3>Impacted Queries / Connections</h3>
+      {% if selected_mdl_schema and selected_mdl_name %}
+      <span class="helper-text">{{ selected_mdl_schema }}.{{ selected_mdl_name }}</span>
+      {% else %}
+      <span class="helper-text">Click a metadata lock above.</span>
+      {% endif %}
+    </div>
+    {% if metadata_lock_impacted.error %}
+    <p class="helper-text">{{ metadata_lock_impacted.error }}</p>
+    {% else %}
+    {{ render_report_table(metadata_lock_impacted, "No pending metadata waits loaded.") }}
+    {% endif %}
+  </article>
+</section>
+{% endif %}
+{% endblock %}

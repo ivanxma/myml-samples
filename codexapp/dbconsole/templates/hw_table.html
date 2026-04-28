@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">HeatWave</p>
+  <h2>HW Table</h2>
+  <p>Review which tables are configured for HeatWave by inspecting secondary engine metadata.</p>
+</section>
+
+<section class="info-grid">
+  <article class="info-card metric-card">
+    <span class="metric-label">Configured</span>
+    <strong class="metric-value">{{ configured_count }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Not Configured</span>
+    <strong class="metric-value">{{ unconfigured_count }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Object Storage</span>
+    <strong class="metric-value">{{ setup_status.summary }}</strong>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>HeatWave Table Inventory</h3>
+    <div class="panel-actions">
+      <form method="get" class="inline-form">
+        <label>
+          Database
+          <select name="database" onchange="this.form.submit()">
+            {% for row in database_inventory %}
+            <option value="{{ row.database_name }}" {% if row.database_name == selected_database %}selected{% endif %}>{{ row.database_name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </form>
+      {% if selected_database %}
+      <a class="button secondary" href="{{ url_for('hw_table_download', database=selected_database) }}">Download CSV</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th>Engine</th>
+          <th>Rows</th>
+          <th>HeatWave Secondary Engine</th>
+          <th>Create Options</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in tables %}
+        <tr>
+          <td>{{ row.table_name }}</td>
+          <td>{{ row.engine }}</td>
+          <td>{{ row.row_count }}</td>
+          <td>{{ "RAPID" if row.heatwave_configured else "-" }}</td>
+          <td><code>{{ row.create_options or "-" }}</code></td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5">No HeatWave table rows available for the selected database.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

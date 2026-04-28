@@ -1,0 +1,668 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Monitoring</p>
+  <h2>Charts</h2>
+  <p>Live monitoring cards for MySQL, replication, and HeatWave activity. Cards can be refreshed, closed, reordered, downloaded, and popped out.</p>
+</section>
+
+<section class="panel chart-toolbar-panel">
+  <div class="chart-toolbar">
+    <div class="chart-toolbar-controls">
+      <button class="button secondary" id="chart-refresh-button" type="button">Refresh</button>
+      <label class="chart-period-field">
+        <span>Refresh Period</span>
+        <select id="chart-refresh-period">
+          <option value="5">5s</option>
+          <option value="15">15s</option>
+          <option value="30">30s</option>
+          <option value="60">60s</option>
+        </select>
+      </label>
+    </div>
+    <div class="chart-toolbar-status">
+      <strong id="chart-last-updated">-</strong>
+      <span class="helper-text" id="chart-refresh-status">Waiting for the first chart render.</span>
+    </div>
+  </div>
+</section>
+
+<section class="panel hidden-chart-panel" id="hidden-chart-panel" hidden>
+  <div class="panel-header">
+    <h3>Hidden Charts</h3>
+    <button class="button secondary" id="restore-all-charts" type="button">Restore All</button>
+  </div>
+  <div class="hidden-chart-actions" id="hidden-chart-actions"></div>
+</section>
+
+<section class="chart-grid" id="chart-grid" aria-live="polite"></section>
+
+<script>
+  (() => {
+    const initialSnapshot = {{ chart_snapshot | tojson }};
+    const dataUrl = {{ charts_data_url | tojson }};
+    const storageKeys = {
+      hidden: "dbconsole-monitoring-chart-hidden",
+      order: "dbconsole-monitoring-chart-order",
+      refreshPeriod: "dbconsole-monitoring-chart-refresh-period"
+    };
+    const maxHistoryPoints = 24;
+    const allowedPeriods = [5, 15, 30, 60];
+    const iconMarkup = {
+      drag: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 5h2v2H9zm4 0h2v2h-2zM9 11h2v2H9zm4 0h2v2h-2zM9 17h2v2H9zm4 0h2v2h-2z"></path>
+        </svg>
+      `,
+      download: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v10.17l3.59-3.58L17 11l-5 5-5-5 1.41-1.41L11 13.17V3zm-7 14h14v2H5z"></path>
+        </svg>
+      `,
+      popup: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M14 3h7v7h-2V6.41l-8.29 8.3-1.42-1.42 8.3-8.29H14zM5 5h6v2H7v10h10v-4h2v6H5z"></path>
+        </svg>
+      `,
+      close: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4l-6.3 6.31-1.41-1.42L9.17 12 2.88 5.71 4.29 4.29l6.3 6.3 6.29-6.3z"></path>
+        </svg>
+      `
+    };
+    const state = {
+      snapshot: initialSnapshot,
+      hidden: new Set(loadJson(storageKeys.hidden, [])),
+      order: loadJson(storageKeys.order, []),
+      refreshPeriod: normalizeRefreshPeriod(loadJson(storageKeys.refreshPeriod, 15)),
+      histories: {},
+      lastHistoryStamp: {},
+      loading: false,
+      timerId: null
+    };
+    const elements = {
+      grid: document.getElementById("chart-grid"),
+      refreshButton: document.getElementById("chart-refresh-button"),
+      refreshPeriod: document.getElementById("chart-refresh-period"),
+      lastUpdated: document.getElementById("chart-last-updated"),
+      refreshStatus: document.getElementById("chart-refresh-status"),
+      hiddenPanel: document.getElementById("hidden-chart-panel"),
+      hiddenActions: document.getElementById("hidden-chart-actions"),
+      restoreAll: document.getElementById("restore-all-charts")
+    };
+
+    function loadJson(key, fallbackValue) {
+      try {
+        const rawValue = window.localStorage.getItem(key);
+        return rawValue ? JSON.parse(rawValue) : fallbackValue;
+      } catch (_) {
+        return fallbackValue;
+      }
+    }
+
+    function saveJson(key, value) {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    }
+
+    function normalizeRefreshPeriod(value) {
+      const numericValue = Number(value);
+      return allowedPeriods.includes(numericValue) ? numericValue : 15;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function formatNumber(value) {
+      const numericValue = Number(value) || 0;
+      return Number.isInteger(numericValue)
+        ? numericValue.toLocaleString()
+        : numericValue.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    }
+
+    function formatBytes(value) {
+      const numericValue = Number(value) || 0;
+      const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+      let scaledValue = numericValue;
+      let unitIndex = 0;
+      while (scaledValue >= 1024 && unitIndex < units.length - 1) {
+        scaledValue /= 1024;
+        unitIndex += 1;
+      }
+      if (unitIndex === 0) {
+        return `${Math.round(scaledValue)} ${units[unitIndex]}`;
+      }
+      return `${scaledValue.toFixed(1)} ${units[unitIndex]}`;
+    }
+
+    function formatMilliseconds(value) {
+      const numericValue = Number(value) || 0;
+      if (numericValue >= 60000) {
+        return `${(numericValue / 60000).toFixed(1)} min`;
+      }
+      if (numericValue >= 1000) {
+        return `${(numericValue / 1000).toFixed(1)} s`;
+      }
+      return `${Math.round(numericValue)} ms`;
+    }
+
+    function formatUnitValue(value, unit) {
+      if (unit === "bytes") {
+        return formatBytes(value);
+      }
+      if (unit === "ms") {
+        return formatMilliseconds(value);
+      }
+      return formatNumber(value);
+    }
+
+    function formatBrowserTimeLabel(timestamp) {
+      const sampleTime = new Date(timestamp);
+      if (Number.isNaN(sampleTime.getTime())) {
+        return String(timestamp || "");
+      }
+      return sampleTime.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+
+    function ensureCardOrder(cards) {
+      const availableIds = cards.map((card) => card.id);
+      state.order = state.order.filter((cardId) => availableIds.includes(cardId));
+      availableIds.forEach((cardId) => {
+        if (!state.order.includes(cardId)) {
+          state.order.push(cardId);
+        }
+      });
+      saveJson(storageKeys.order, state.order);
+    }
+
+    function sortedCards(cards) {
+      const orderLookup = new Map(state.order.map((cardId, index) => [cardId, index]));
+      return [...cards].sort((left, right) => {
+        const leftIndex = orderLookup.has(left.id) ? orderLookup.get(left.id) : Number.MAX_SAFE_INTEGER;
+        const rightIndex = orderLookup.has(right.id) ? orderLookup.get(right.id) : Number.MAX_SAFE_INTEGER;
+        return leftIndex - rightIndex;
+      });
+    }
+
+    function updateHistories(snapshot) {
+      const snapshotStamp = snapshot.generated_at || new Date().toISOString();
+      snapshot.cards.forEach((card) => {
+        if (card.kind !== "timeseries" || card.error) {
+          return;
+        }
+        if (state.lastHistoryStamp[card.id] === snapshotStamp) {
+          return;
+        }
+        const history = state.histories[card.id] || [];
+        const point = { timestamp: snapshotStamp, values: {} };
+        card.series.forEach((series) => {
+          point.values[series.key] = Number(series.value) || 0;
+        });
+        history.push(point);
+        if (history.length > maxHistoryPoints) {
+          history.shift();
+        }
+        state.histories[card.id] = history;
+        state.lastHistoryStamp[card.id] = snapshotStamp;
+      });
+    }
+
+    function setRefreshStatus(message, isError = false) {
+      elements.refreshStatus.textContent = message;
+      elements.refreshStatus.classList.toggle("error-text", isError);
+    }
+
+    function updateLastUpdated(snapshot) {
+      const lastUpdated = snapshot.generated_at ? new Date(snapshot.generated_at) : new Date();
+      elements.lastUpdated.textContent = `Last updated ${lastUpdated.toLocaleTimeString()}`;
+    }
+
+    function renderLegend(card) {
+      if (!card.series.length) {
+        return "";
+      }
+      return `
+        <div class="chart-legend">
+          ${card.series.map((series) => `
+            <div class="chart-legend-item">
+              <span class="legend-swatch" style="background:${escapeHtml(series.color)}"></span>
+              <div>
+                <span class="chart-legend-label">${escapeHtml(series.label)}</span>
+                <strong class="chart-legend-value">${escapeHtml(series.display || formatUnitValue(series.value, card.unit))}</strong>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderDetails(card) {
+      if (!card.details || !card.details.length) {
+        return "";
+      }
+      return `
+        <ul class="plain-list chart-detail-list">
+          ${card.details.map((detail) => `<li>${escapeHtml(detail)}</li>`).join("")}
+        </ul>
+      `;
+    }
+
+    function buildLinePath(points, width, height, padding, maxValue) {
+      return points.map((value, index) => {
+        const denominator = Math.max(points.length - 1, 1);
+        const x = padding + ((width - padding * 2) * (points.length === 1 ? 1 : index / denominator));
+        const y = padding + (height - padding * 2) - ((value / maxValue) * (height - padding * 2));
+        return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+      }).join(" ");
+    }
+
+    function buildTimeAxisMarkup(history, width, height, padding, axisY) {
+      if (!history.length) {
+        return "";
+      }
+      const tickIndexes = Array.from(new Set([
+        0,
+        Math.floor((history.length - 1) / 2),
+        history.length - 1
+      ]));
+      return tickIndexes.map((index) => {
+        const denominator = Math.max(history.length - 1, 1);
+        const x = padding + ((width - padding * 2) * (history.length === 1 ? 1 : index / denominator));
+        const label = formatBrowserTimeLabel(history[index].timestamp);
+        let anchor = "middle";
+        if (index === 0) {
+          anchor = "start";
+        } else if (index === history.length - 1) {
+          anchor = "end";
+        }
+        return `
+          <line class="chart-axis-tick" x1="${x}" x2="${x}" y1="${axisY}" y2="${axisY + 6}"></line>
+          <text class="chart-axis-label" x="${x}" y="${height - 6}" text-anchor="${anchor}">${escapeHtml(label)}</text>
+        `;
+      }).join("");
+    }
+
+    function renderLineChart(card) {
+      const history = state.histories[card.id] || [];
+      if (!history.length) {
+        return `<p class="helper-text chart-empty-state">Waiting for chart samples.</p>`;
+      }
+      const width = 660;
+      const height = 240;
+      const padding = 24;
+      const plotBottom = 34;
+      const plotHeight = height - padding - plotBottom;
+      const axisY = padding + plotHeight;
+      const allValues = history.flatMap((point) => card.series.map((series) => Number(point.values[series.key]) || 0));
+      const maxValue = Math.max(...allValues, 1);
+      const guides = [0, 0.5, 1].map((position) => {
+        const y = padding + plotHeight - (plotHeight * position);
+        return `<line class="chart-gridline" x1="${padding}" x2="${width - padding}" y1="${y}" y2="${y}"></line>`;
+      }).join("");
+      const paths = card.series.map((series) => {
+        const points = history.map((point) => Number(point.values[series.key]) || 0);
+        const path = points.map((value, index) => {
+          const denominator = Math.max(points.length - 1, 1);
+          const x = padding + ((width - padding * 2) * (points.length === 1 ? 1 : index / denominator));
+          const y = padding + plotHeight - ((value / maxValue) * plotHeight);
+          return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+        }).join(" ");
+        const latestValue = points[points.length - 1] || 0;
+        const latestX = padding + (width - padding * 2);
+        const latestY = padding + plotHeight - ((latestValue / maxValue) * plotHeight);
+        return `
+          <path class="chart-line" d="${path}" stroke="${escapeHtml(series.color)}"></path>
+          <circle class="chart-point" cx="${latestX}" cy="${latestY}" r="4" fill="${escapeHtml(series.color)}"></circle>
+        `;
+      }).join("");
+      const axisMarkup = `
+        <line class="chart-axis-line" x1="${padding}" x2="${padding}" y1="${padding}" y2="${axisY}"></line>
+        <line class="chart-axis-line" x1="${padding}" x2="${width - padding}" y1="${axisY}" y2="${axisY}"></line>
+      `;
+      const timeAxisMarkup = buildTimeAxisMarkup(history, width, height, padding, axisY);
+      return `
+        <div class="chart-canvas">
+          <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(card.title)} chart">
+            ${guides}
+            ${axisMarkup}
+            ${paths}
+            <text class="chart-axis-label" x="${padding}" y="${padding - 6}">${escapeHtml(formatUnitValue(maxValue, card.unit))}</text>
+            <text class="chart-axis-label" x="${padding - 4}" y="${axisY + 4}" text-anchor="end">0</text>
+            ${timeAxisMarkup}
+          </svg>
+        </div>
+      `;
+    }
+
+    function renderBarChart(card) {
+      if (!card.bars.length) {
+        return `<p class="helper-text chart-empty-state">No rows returned for this chart.</p>`;
+      }
+      const maxValue = Math.max(...card.bars.map((bar) => Number(bar.value) || 0), 1);
+      return `
+        <div class="bar-chart-list">
+          ${card.bars.map((bar) => {
+            const percentage = Math.max(4, ((Number(bar.value) || 0) / maxValue) * 100);
+            return `
+              <div class="bar-chart-row">
+                <div class="bar-chart-labels">
+                  <span>${escapeHtml(bar.label)}</span>
+                  <strong>${escapeHtml(bar.display || formatUnitValue(bar.value, card.unit))}</strong>
+                </div>
+                <div class="bar-chart-track">
+                  <span class="bar-chart-fill" style="width:${percentage}%; background:${escapeHtml(bar.color || '#a93a1a')}"></span>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    function renderCardBody(card) {
+      if (card.error) {
+        return `<p class="helper-text">${escapeHtml(card.error)}</p>`;
+      }
+      const chartMarkup = card.kind === "bars" ? renderBarChart(card) : renderLineChart(card);
+      return `
+        ${chartMarkup}
+        ${card.kind === "timeseries" ? renderLegend(card) : ""}
+        ${renderDetails(card)}
+      `;
+    }
+
+    function getCardById(cardId) {
+      return state.snapshot.cards.find((card) => card.id === cardId);
+    }
+
+    function renderCard(card) {
+      return `
+        <article class="chart-card" data-card-id="${escapeHtml(card.id)}" draggable="true">
+          <header class="chart-card-header">
+            <div class="chart-card-titlebar">
+              <span class="chart-drag-handle" title="Drag to reorder">${iconMarkup.drag}</span>
+              <div>
+                <h3>${escapeHtml(card.title)}</h3>
+                <p>${escapeHtml(card.subtitle)}</p>
+              </div>
+            </div>
+            <div class="chart-card-actions">
+              <button class="chart-icon-button" type="button" data-chart-action="download" title="Download chart data" aria-label="Download chart data">${iconMarkup.download}</button>
+              <button class="chart-icon-button" type="button" data-chart-action="popup" title="Open chart in popup" aria-label="Open chart in popup">${iconMarkup.popup}</button>
+              <button class="chart-icon-button" type="button" data-chart-action="close" title="Close chart" aria-label="Close chart">${iconMarkup.close}</button>
+            </div>
+          </header>
+          <div class="chart-card-body">
+            ${renderCardBody(card)}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderHiddenCharts(cards) {
+      const hiddenCards = sortedCards(cards).filter((card) => state.hidden.has(card.id));
+      if (!hiddenCards.length) {
+        elements.hiddenPanel.hidden = true;
+        elements.hiddenActions.innerHTML = "";
+        return;
+      }
+      elements.hiddenPanel.hidden = false;
+      elements.hiddenActions.innerHTML = hiddenCards.map((card) => `
+        <button class="hidden-chart-chip" type="button" data-restore-card="${escapeHtml(card.id)}">${escapeHtml(card.title)}</button>
+      `).join("");
+    }
+
+    function renderCharts() {
+      ensureCardOrder(state.snapshot.cards);
+      updateHistories(state.snapshot);
+      updateLastUpdated(state.snapshot);
+      const visibleCards = sortedCards(state.snapshot.cards).filter((card) => !state.hidden.has(card.id));
+      elements.grid.innerHTML = visibleCards.length
+        ? visibleCards.map(renderCard).join("")
+        : `<article class="panel empty-chart-panel"><p>All charts are hidden. Restore a chart to continue.</p></article>`;
+      renderHiddenCharts(state.snapshot.cards);
+    }
+
+    function saveHiddenCards() {
+      saveJson(storageKeys.hidden, Array.from(state.hidden));
+    }
+
+    function saveOrderFromDom() {
+      const visibleOrder = Array.from(elements.grid.querySelectorAll(".chart-card")).map((cardElement) => cardElement.dataset.cardId);
+      const hiddenOrder = state.order.filter((cardId) => state.hidden.has(cardId));
+      state.order = [...visibleOrder, ...hiddenOrder.filter((cardId) => !visibleOrder.includes(cardId))];
+      saveJson(storageKeys.order, state.order);
+    }
+
+    function buildCsvRows(card) {
+      if (card.kind === "bars") {
+        return {
+          headers: ["label", "value", "display"],
+          rows: card.bars.map((bar) => [bar.label, bar.value, bar.display || ""])
+        };
+      }
+      const history = state.histories[card.id] || [];
+      return {
+        headers: ["timestamp", ...card.series.map((series) => series.label)],
+        rows: history.map((point) => [
+          point.timestamp,
+          ...card.series.map((series) => point.values[series.key] ?? "")
+        ])
+      };
+    }
+
+    function toCsvText(dataset) {
+      const serializeCell = (value) => {
+        const raw = String(value ?? "");
+        if (raw.includes(",") || raw.includes('"') || raw.includes("\n")) {
+          return `"${raw.replaceAll('"', '""')}"`;
+        }
+        return raw;
+      };
+      return [dataset.headers, ...dataset.rows].map((row) => row.map(serializeCell).join(",")).join("\n");
+    }
+
+    function downloadCard(card) {
+      const dataset = buildCsvRows(card);
+      const blob = new Blob([toCsvText(dataset)], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const timestamp = new Date().toISOString().replaceAll(":", "-");
+      link.href = url;
+      link.download = `${card.id}-${timestamp}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    function openPopup(card) {
+      const popup = window.open("", `${card.id}-popup`, "width=1080,height=760,resizable=yes,scrollbars=yes");
+      if (!popup) {
+        setRefreshStatus("Popup blocked by the browser.", true);
+        return;
+      }
+      popup.document.write(`
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>${escapeHtml(card.title)}</title>
+            <style>
+              body { margin: 0; padding: 24px; background: #f4eee7; color: #211d18; font: 16px/1.4 "Avenir Next", "Segoe UI", sans-serif; }
+              .popup-card { background: rgba(255, 251, 246, 0.96); border: 1px solid rgba(33, 29, 24, 0.11); border-radius: 24px; padding: 24px; box-shadow: 0 20px 50px rgba(67, 42, 15, 0.12); }
+              .popup-card h1 { margin: 0 0 6px; font-family: Georgia, "Times New Roman", serif; }
+              .popup-card p { margin: 0 0 20px; color: #6e655b; }
+              .chart-svg { width: 100%; height: auto; }
+              .chart-gridline { stroke: rgba(33, 29, 24, 0.12); stroke-dasharray: 4 4; }
+              .chart-axis-line, .chart-axis-tick { stroke: rgba(33, 29, 24, 0.32); stroke-width: 1.2; }
+              .chart-line { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+              .chart-axis-label { fill: #6e655b; font-size: 12px; }
+              .bar-chart-list { display: grid; gap: 14px; }
+              .bar-chart-labels { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+              .bar-chart-track { height: 14px; border-radius: 999px; background: rgba(33, 29, 24, 0.08); overflow: hidden; }
+              .bar-chart-fill { display: block; height: 100%; border-radius: 999px; }
+              .chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+              .chart-legend-item { display: flex; gap: 10px; align-items: center; }
+              .legend-swatch { width: 12px; height: 12px; border-radius: 999px; display: inline-block; }
+              .chart-detail-list { margin: 0; padding-left: 18px; }
+            </style>
+          </head>
+          <body>
+            <article class="popup-card">
+              <h1>${escapeHtml(card.title)}</h1>
+              <p>${escapeHtml(card.subtitle)}</p>
+              ${renderCardBody(card)}
+            </article>
+          </body>
+        </html>
+      `);
+      popup.document.close();
+    }
+
+    async function refreshCharts() {
+      if (state.loading) {
+        return;
+      }
+      state.loading = true;
+      elements.refreshButton.disabled = true;
+      setRefreshStatus("Refreshing chart snapshot...");
+      try {
+        const response = await window.fetch(dataUrl, {
+          headers: {
+            Accept: "application/json"
+          }
+        });
+        if (!response.ok) {
+          throw new Error(`Refresh failed with HTTP ${response.status}.`);
+        }
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("Refresh returned a non-JSON response.");
+        }
+        state.snapshot = await response.json();
+        renderCharts();
+        setRefreshStatus(`Auto-refresh every ${state.refreshPeriod}s.`);
+      } catch (error) {
+        setRefreshStatus(error.message || "Refresh failed.", true);
+      } finally {
+        state.loading = false;
+        elements.refreshButton.disabled = false;
+      }
+    }
+
+    function scheduleRefresh() {
+      if (state.timerId) {
+        window.clearInterval(state.timerId);
+      }
+      state.timerId = window.setInterval(() => {
+        refreshCharts();
+      }, state.refreshPeriod * 1000);
+      setRefreshStatus(`Auto-refresh every ${state.refreshPeriod}s.`);
+    }
+
+    elements.refreshButton.addEventListener("click", () => {
+      refreshCharts();
+    });
+
+    elements.refreshPeriod.value = String(state.refreshPeriod);
+    elements.refreshPeriod.addEventListener("change", () => {
+      state.refreshPeriod = normalizeRefreshPeriod(elements.refreshPeriod.value);
+      saveJson(storageKeys.refreshPeriod, state.refreshPeriod);
+      scheduleRefresh();
+    });
+
+    elements.grid.addEventListener("click", (event) => {
+      const actionButton = event.target.closest("[data-chart-action]");
+      if (!actionButton) {
+        return;
+      }
+      const cardElement = actionButton.closest(".chart-card");
+      if (!cardElement) {
+        return;
+      }
+      const card = getCardById(cardElement.dataset.cardId);
+      if (!card) {
+        return;
+      }
+      const action = actionButton.dataset.chartAction;
+      if (action === "close") {
+        state.hidden.add(card.id);
+        saveHiddenCards();
+        renderCharts();
+        return;
+      }
+      if (action === "download") {
+        downloadCard(card);
+        return;
+      }
+      if (action === "popup") {
+        openPopup(card);
+      }
+    });
+
+    elements.hiddenActions.addEventListener("click", (event) => {
+      const restoreButton = event.target.closest("[data-restore-card]");
+      if (!restoreButton) {
+        return;
+      }
+      state.hidden.delete(restoreButton.dataset.restoreCard);
+      saveHiddenCards();
+      renderCharts();
+    });
+
+    elements.restoreAll.addEventListener("click", () => {
+      state.hidden.clear();
+      saveHiddenCards();
+      renderCharts();
+    });
+
+    elements.grid.addEventListener("dragstart", (event) => {
+      const cardElement = event.target.closest(".chart-card");
+      if (!cardElement) {
+        return;
+      }
+      cardElement.classList.add("dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", cardElement.dataset.cardId);
+    });
+
+    elements.grid.addEventListener("dragover", (event) => {
+      event.preventDefault();
+    });
+
+    elements.grid.addEventListener("dragenter", (event) => {
+      event.preventDefault();
+      const targetCard = event.target.closest(".chart-card");
+      const draggingCard = elements.grid.querySelector(".chart-card.dragging");
+      if (!targetCard || !draggingCard || targetCard === draggingCard) {
+        return;
+      }
+      const bounds = targetCard.getBoundingClientRect();
+      const insertBefore = event.clientY < (bounds.top + bounds.height / 2);
+      elements.grid.insertBefore(draggingCard, insertBefore ? targetCard : targetCard.nextSibling);
+    });
+
+    elements.grid.addEventListener("dragend", () => {
+      const draggingCard = elements.grid.querySelector(".chart-card.dragging");
+      if (draggingCard) {
+        draggingCard.classList.remove("dragging");
+      }
+      saveOrderFromDom();
+    });
+
+    renderCharts();
+    scheduleRefresh();
+  })();
+</script>
+{% endblock %}

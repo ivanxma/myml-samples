@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">MySQL</p>
+  <h2>Admin Dashboard</h2>
+  <p>Review the connected server, schema inventory, and HeatWave-related status indicators.</p>
+</section>
+
+<section class="info-grid">
+  <article class="info-card metric-card">
+    <span class="metric-label">Endpoint</span>
+    <strong class="metric-value">{{ server_overview.connection_endpoint }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Databases</span>
+    <strong class="metric-value">{{ server_overview.database_count }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Tables</span>
+    <strong class="metric-value">{{ server_overview.table_count }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Default DB</span>
+    <strong class="metric-value">{{ server_overview.default_database }}</strong>
+  </article>
+</section>
+
+<section class="split-layout">
+  <article class="panel">
+    <h3>Connection Details</h3>
+    <dl class="detail-list">
+      <div>
+        <dt>Version</dt>
+        <dd>{{ server_overview.server_version }}</dd>
+      </div>
+      <div>
+        <dt>Current User</dt>
+        <dd>{{ server_overview.current_user }}</dd>
+      </div>
+      <div>
+        <dt>Profile</dt>
+        <dd>{{ current_profile_name or "-" }}</dd>
+      </div>
+      <div>
+        <dt>Object Storage</dt>
+        <dd>{{ setup_status.summary }}</dd>
+      </div>
+    </dl>
+  </article>
+
+  <article class="panel">
+    <h3>HeatWave Status Variables</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in server_overview.rapid_status_rows %}
+          <tr>
+            <td>{{ row.Variable_name or row.variable_name or row.name or "-" }}</td>
+            <td>{{ row.Value or row.value or "-" }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="2">No HeatWave status rows returned.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+
+<section class="panel">
+  <h3>Database Inventory</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Database</th>
+          <th>Tables</th>
+          <th>Scope</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in database_inventory %}
+        <tr>
+          <td>{{ row.database_name }}</td>
+          <td>{{ row.table_count }}</td>
+          <td>{{ "System" if row.is_system else "User" }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="3">No database metadata available.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">HeatWave</p>
+  <h2>Management</h2>
+  <p>Run core HeatWave table actions and review server-side variables and plugin status.</p>
+</section>
+
+<section class="split-layout split-layout-top">
+  <article class="panel">
+    <h3>Table Action</h3>
+    <form method="post" class="form-grid">
+      <label>
+        Database
+        <select name="database" onchange="window.location='{{ url_for('heatwave_management_page') }}?database=' + encodeURIComponent(this.value);">
+          <option value="">Choose a database</option>
+          {% for row in database_inventory %}
+          <option value="{{ row.database_name }}" {% if row.database_name == selected_database %}selected{% endif %}>{{ row.database_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Table
+        <select name="table">
+          <option value="">Choose a table</option>
+          {% for row in tables %}
+          <option value="{{ row.table_name }}">{{ row.table_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="form-actions stacked-actions">
+        <button class="button primary" type="submit" name="management_action" value="configure_load">Configure + Load</button>
+        <button class="button secondary" type="submit" name="management_action" value="unload">Unload</button>
+        <button class="button secondary danger" type="submit" name="management_action" value="drop_secondary_engine">Remove Secondary Engine</button>
+      </div>
+    </form>
+  </article>
+
+  <article class="panel">
+    <h3>Object Storage Context</h3>
+    <dl class="detail-list">
+      <div>
+        <dt>Region</dt>
+        <dd>{{ object_storage_config.region or "-" }}</dd>
+      </div>
+      <div>
+        <dt>Namespace</dt>
+        <dd>{{ object_storage_config.namespace or "-" }}</dd>
+      </div>
+      <div>
+        <dt>Bucket</dt>
+        <dd>{{ object_storage_config.bucket_name or "-" }}</dd>
+      </div>
+      <div>
+        <dt>Prefix</dt>
+        <dd>{{ object_storage_config.bucket_prefix or "-" }}</dd>
+      </div>
+    </dl>
+  </article>
+</section>
+
+{% if management_summary.load_errors %}
+<section class="panel">
+  <h3>Capability Notes</h3>
+  <ul class="plain-list">
+    {% for error in management_summary.load_errors %}
+    <li>{{ error }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="split-layout">
+  <article class="panel">
+    <h3>HeatWave Variables</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in management_summary.variables %}
+          <tr>
+            <td>{{ row.Variable_name or row.variable_name or "-" }}</td>
+            <td>{{ row.Value or row.value or "-" }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="2">No HeatWave variables returned.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <h3>HeatWave Plugins</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Plugin</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in management_summary.plugins %}
+          <tr>
+            <td>{{ row.plugin_name_value }}</td>
+            <td>{{ row.plugin_status_value }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="2">No matching HeatWave plugins found.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+{% endblock %}

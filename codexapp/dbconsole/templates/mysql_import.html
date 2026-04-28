@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">MySQL</p>
+  <h2>Import</h2>
+  <p>Upload a CSV or JSON file, review the inferred table definition, and load the data into a selected database.</p>
+</section>
+
+<section class="split-layout split-layout-top">
+  <article class="panel">
+    <div class="panel-header">
+      <h3>Upload and Preview</h3>
+      {% if import_page.plan_loaded %}
+      <form method="post">
+        <input type="hidden" name="import_action" value="clear">
+        <button class="button secondary" type="submit">Clear Draft</button>
+      </form>
+      {% endif %}
+    </div>
+    <form method="post" enctype="multipart/form-data" class="form-grid" data-import-toggle-form>
+      <input type="hidden" name="import_action" value="preview">
+      <label class="checkbox-field">
+        <input
+          type="checkbox"
+          name="create_database"
+          value="1"
+          {% if import_page.create_database %}checked{% endif %}
+          data-create-db-toggle
+        >
+        <span>Create DB</span>
+      </label>
+      <label>
+        Database
+        <select
+          name="selected_database"
+          data-existing-db-field
+          {% if import_page.create_database %}disabled{% endif %}
+        >
+          <option value="">Choose a database</option>
+          {% for row in import_page.database_inventory %}
+          <option value="{{ row.database_name }}" {% if row.database_name == import_page.selected_database %}selected{% endif %}>
+            {{ row.database_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        New Database Name
+        <input
+          name="new_database_name"
+          type="text"
+          value="{{ import_page.new_database_name }}"
+          placeholder="example_import_db"
+          data-new-db-field
+          {% if not import_page.create_database %}disabled{% endif %}
+        >
+      </label>
+      <label class="full-span">
+        Upload File
+        <input name="import_file" type="file" accept=".csv,.json,text/csv,application/json">
+      </label>
+      <p class="helper-text">Supported formats: CSV and JSON. The uploaded file name becomes the default table name.</p>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Preview File</button>
+      </div>
+    </form>
+  </article>
+
+  <article class="panel">
+    <h3>Import Notes</h3>
+    <ul class="plain-list">
+      <li>Preview first to inspect sample rows and inferred column types.</li>
+      <li>Edit the target table name, column names, and data types before importing.</li>
+      <li>If the target table already exists, enable Replace Table or choose a different table name.</li>
+    </ul>
+    {% if import_page.plan_loaded %}
+    <h4>Preview Summary</h4>
+    <dl class="detail-list">
+      <div>
+        <dt>File</dt>
+        <dd>{{ import_page.source_filename }}</dd>
+      </div>
+      <div>
+        <dt>Format</dt>
+        <dd>{{ import_page.file_format }}</dd>
+      </div>
+      <div>
+        <dt>Rows</dt>
+        <dd>{{ import_page.row_count }}</dd>
+      </div>
+      <div>
+        <dt>Target DB</dt>
+        <dd>{{ import_page.effective_database_name or "-" }}</dd>
+      </div>
+    </dl>
+    {% endif %}
+  </article>
+</section>
+
+{% if import_page.plan_loaded %}
+<section class="info-grid">
+  <article class="info-card metric-card">
+    <span class="metric-label">Source File</span>
+    <strong class="metric-value">{{ import_page.source_filename }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Rows</span>
+    <strong class="metric-value">{{ import_page.row_count }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Target DB</span>
+    <strong class="metric-value">{{ import_page.effective_database_name or "-" }}</strong>
+  </article>
+  <article class="info-card metric-card">
+    <span class="metric-label">Default Table</span>
+    <strong class="metric-value">{{ import_page.table_name or "-" }}</strong>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Table Definition</h3>
+    <span class="helper-text">{{ import_page.column_definitions|length }} columns</span>
+  </div>
+  {% if import_page.table_exists %}
+  <div class="flash error">
+    Table <strong>{{ import_page.effective_database_name }}.{{ import_page.table_name }}</strong> already exists. Enable Replace Table or choose another name.
+  </div>
+  {% endif %}
+  <form method="post" class="form-grid" data-import-toggle-form data-import-run-form>
+    <input type="hidden" name="import_action" value="import">
+    <label class="checkbox-field">
+      <input
+        type="checkbox"
+        name="create_database"
+        value="1"
+        {% if import_page.create_database %}checked{% endif %}
+        data-create-db-toggle
+      >
+      <span>Create DB</span>
+    </label>
+    <label>
+      Database
+      <select
+        name="selected_database"
+        data-existing-db-field
+        {% if import_page.create_database %}disabled{% endif %}
+      >
+        <option value="">Choose a database</option>
+        {% for row in import_page.database_inventory %}
+        <option value="{{ row.database_name }}" {% if row.database_name == import_page.selected_database %}selected{% endif %}>
+          {{ row.database_name }}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      New Database Name
+      <input
+        name="new_database_name"
+        type="text"
+        value="{{ import_page.new_database_name }}"
+        placeholder="example_import_db"
+        data-new-db-field
+        {% if not import_page.create_database %}disabled{% endif %}
+      >
+    </label>
+    <label>
+      Table Name
+      <input name="table_name" type="text" value="{{ import_page.table_name }}" placeholder="import_table">
+    </label>
+    <label class="checkbox-field">
+      <input
+        type="checkbox"
+        name="replace_existing_table"
+        value="1"
+        {% if import_page.replace_existing_table %}checked{% endif %}
+        data-replace-existing-table
+      >
+      <span>Replace Table</span>
+    </label>
+    <p class="helper-text">Replace Table drops the existing table before recreating it from the edited definition below.</p>
+
+    <div class="table-wrap full-span">
+      <table>
+        <thead>
+          <tr>
+            <th>Source Column</th>
+            <th>Target Column</th>
+            <th>Data Type</th>
+            <th>Nullable</th>
+            <th>Sample Values</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for column in import_page.column_definitions %}
+          <tr>
+            <td>{{ column.source_name }}</td>
+            <td>
+              <input name="column_name_{{ loop.index0 }}" type="text" value="{{ column.column_name }}">
+            </td>
+            <td>
+              <input name="column_type_{{ loop.index0 }}" type="text" value="{{ column.data_type }}" list="import-type-options">
+            </td>
+            <td>
+              <label class="checkbox-field">
+                <input
+                  type="checkbox"
+                  name="column_allow_null_{{ loop.index0 }}"
+                  value="1"
+                  {% if column.allow_null %}checked{% endif %}
+                >
+                <span>NULL</span>
+              </label>
+            </td>
+            <td>{{ column.sample_values|join(", ") or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="form-actions">
+      <button class="button primary" type="submit">Import</button>
+      <a class="button secondary" href="{{ url_for('mysql_import_page') }}">Refresh Preview</a>
+    </div>
+  </form>
+
+  <datalist id="import-type-options">
+    {% for option in import_page.import_type_options %}
+    <option value="{{ option }}"></option>
+    {% endfor %}
+  </datalist>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Sample Data</h3>
+    <span class="helper-text">First {{ import_page.sample_rows|length }} rows</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for column_name in import_page.sample_columns %}
+          <th>{{ column_name }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in import_page.sample_rows %}
+        <tr>
+          {% for column_name in import_page.sample_columns %}
+          <td>{{ row[column_name] }}</td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="{{ import_page.sample_columns|length if import_page.sample_columns else 1 }}">No sample rows are available.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<section class="panel">
+  <h3>No Preview Loaded</h3>
+  <p class="helper-text">Choose a target database, upload a CSV or JSON file, and click Preview File to inspect the generated table definition.</p>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+  (() => {
+    const toggleForms = Array.from(document.querySelectorAll("[data-import-toggle-form]"));
+    toggleForms.forEach((form) => {
+      const toggle = form.querySelector("[data-create-db-toggle]");
+      const existingField = form.querySelector("[data-existing-db-field]");
+      const newDbField = form.querySelector("[data-new-db-field]");
+      if (!toggle || !existingField || !newDbField) {
+        return;
+      }
+
+      const syncFields = () => {
+        const useNewDatabase = toggle.checked;
+        existingField.disabled = useNewDatabase;
+        newDbField.disabled = !useNewDatabase;
+      };
+
+      syncFields();
+      toggle.addEventListener("change", syncFields);
+    });
+
+    const importForm = document.querySelector("[data-import-run-form]");
+    if (!importForm) {
+      return;
+    }
+
+    importForm.addEventListener("submit", (event) => {
+      const replaceField = importForm.querySelector("[data-replace-existing-table]");
+      const tableField = importForm.querySelector("[name='table_name']");
+      if (!replaceField || !replaceField.checked) {
+        return;
+      }
+      const tableName = tableField && tableField.value.trim() ? tableField.value.trim() : "the selected table";
+      if (!window.confirm(`Replace ${tableName}? Existing data in that table will be removed.`)) {
+        event.preventDefault();
+      }
+    });
+  })();
+</script>
+{% endblock %}

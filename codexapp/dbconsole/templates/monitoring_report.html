@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Monitoring</p>
+  <h2>{{ report_title }}</h2>
+  <p>{{ report_description }}</p>
+</section>
+
+{% if error_message %}
+<section class="panel">
+  <h3>Monitoring Error</h3>
+  <p class="helper-text">{{ error_message }}</p>
+</section>
+{% else %}
+<section class="panel">
+  <div class="panel-header">
+    <h3>Result Set</h3>
+    <div class="panel-actions">
+      {% if current_endpoint == 'monitoring_ml_page' %}
+      <form method="get" class="inline-form">
+        <label class="checkbox-field inline-checkbox">
+          <input
+            name="current_ml_connection_only"
+            type="checkbox"
+            value="1"
+            {% if current_ml_connection_only %}checked{% endif %}
+            onchange="this.form.submit()"
+          >
+          <span>Current ML Connection Only</span>
+        </label>
+      </form>
+      {% endif %}
+      <a
+        class="button secondary"
+        href="{{ url_for(download_endpoint, current_ml_connection_only='1' if current_ml_connection_only else '0') if current_endpoint == 'monitoring_ml_page' else url_for(download_endpoint) }}"
+      >
+        Download CSV
+      </a>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for column in report.columns %}
+          <th>{{ column }}</th>
+          {% else %}
+          <th>No columns returned</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.rows %}
+        <tr>
+          {% for column in report.columns %}
+          <td>{{ row[column] }}</td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="{{ report.columns|length if report.columns else 1 }}">No rows returned.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

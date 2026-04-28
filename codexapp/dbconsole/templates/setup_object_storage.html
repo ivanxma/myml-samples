@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+  <p class="eyebrow">Admin</p>
+  <h2>Setup Object Storage</h2>
+  <p>Store the OCI Object Storage values used by HeatWave management workflows in this console.</p>
+</section>
+
+<section class="split-layout">
+  <article class="panel">
+    <h3>Configuration Status</h3>
+    <dl class="detail-list">
+      <div>
+        <dt>Status</dt>
+        <dd>{{ setup_status.summary }}</dd>
+      </div>
+      <div>
+        <dt>Region</dt>
+        <dd>{{ object_storage_config.region or "-" }}</dd>
+      </div>
+      <div>
+        <dt>Namespace</dt>
+        <dd>{{ object_storage_config.namespace or "-" }}</dd>
+      </div>
+      <div>
+        <dt>Bucket</dt>
+        <dd>{{ object_storage_config.bucket_name or "-" }}</dd>
+      </div>
+      <div>
+        <dt>Prefix</dt>
+        <dd>{{ object_storage_config.bucket_prefix or "-" }}</dd>
+      </div>
+      <div>
+        <dt>OCI Profile</dt>
+        <dd>{{ object_storage_config.config_profile or "-" }}</dd>
+      </div>
+    </dl>
+  </article>
+
+  <article class="panel">
+    <h3>Object Storage Settings</h3>
+    <form method="post" class="form-grid">
+      <label>
+        Region
+        <input name="region" type="text" value="{{ object_storage_config.region }}">
+      </label>
+      <label>
+        Namespace
+        <input name="namespace" type="text" value="{{ object_storage_config.namespace }}">
+      </label>
+      <label>
+        Bucket Name
+        <input name="bucket_name" type="text" value="{{ object_storage_config.bucket_name }}">
+      </label>
+      <label>
+        Bucket Prefix
+        <input name="bucket_prefix" type="text" value="{{ object_storage_config.bucket_prefix }}">
+      </label>
+      <label class="full-span">
+        OCI Config Profile
+        <input name="config_profile" type="text" value="{{ object_storage_config.config_profile }}">
+      </label>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Save Object Storage Config</button>
+      </div>
+    </form>
+  </article>
+</section>
+{% endblock %}
